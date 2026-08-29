@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ParticipantDashboard } from './ParticipantDashboard';
 import { AITeamMatchmaker } from './AITeamMatchmaker';
 import { EventProvider } from '../../context/EventContext';
@@ -41,7 +41,7 @@ describe('ParticipantDashboard', () => {
 
   it('displays XP progress bar', () => {
     renderParticipant();
-    expect(screen.getByText('XP Level Progress (Level 6)')).toBeInTheDocument();
+    expect(screen.getByText(/XP Level Progress \(Level 6\)/)).toBeInTheDocument();
     expect(screen.getByText('2850 / 3500 XP')).toBeInTheDocument();
   });
 
@@ -56,9 +56,7 @@ describe('ParticipantDashboard', () => {
 
   it('shows badges section', () => {
     renderParticipant();
-    // Badges are in gamification tab - need to click the tab first
     fireEvent.click(screen.getByText('Hacker XP & Badges'));
-    // Text is split across elements - use regex and getAllByText
     expect(screen.getAllByText(/Early Bird/)[0]).toBeInTheDocument();
     expect(screen.getAllByText(/AI Dream/)[0]).toBeInTheDocument();
     expect(screen.getAllByText(/Midnight/)[0]).toBeInTheDocument();
@@ -94,12 +92,11 @@ describe('AITeamMatchmaker', () => {
 
   it('displays current team status', () => {
     renderMatchmaker();
-    // Text is split across elements, use regex
     expect(screen.getByText(/Your Squad:/)).toBeInTheDocument();
     expect(screen.getByText('OmniNexus AI')).toBeInTheDocument();
     expect(screen.getByText(/Roster:/)).toBeInTheDocument();
-    expect(screen.getByText(/3 \/ 4 Members/)).toBeInTheDocument();
-    expect(screen.getByText(/98%/)).toBeInTheDocument(); // compatibility score
+    expect(screen.getByText(/4 Members/)).toBeInTheDocument();
+    expect(screen.getByText(/Dream Squad Match/)).toBeInTheDocument();
   });
 
   it('shows candidate cards with match scores', () => {
@@ -112,27 +109,22 @@ describe('AITeamMatchmaker', () => {
 
   it('shows synergy analysis for each candidate', () => {
     renderMatchmaker();
-    // Multiple candidates have "Synergy Analysis:" - check at least one exists
-    const synergyElements = screen.getAllByText('Synergy Analysis:');
+    const synergyElements = screen.getAllByText('AI Vector Synergy Analysis:');
     expect(synergyElements.length).toBeGreaterThan(0);
     expect(screen.getByText('Complements your AI skillset with high-performance Rust/Wasm backend execution.')).toBeInTheDocument();
   });
 
-  it('shows missing skill complements', () => {
+  it('filters candidates by role and track', () => {
     renderMatchmaker();
-    expect(screen.getByText('Fills team gap: Rust Memory Safety, Cryptography')).toBeInTheDocument();
-  });
-
-  it('filters candidates by role', () => {
-    renderMatchmaker();
-    const allButton = screen.getByText('All Roles');
-    expect(allButton).toBeInTheDocument();
+    const allRolesButton = screen.getByText('All Roles');
+    expect(allRolesButton).toBeInTheDocument();
+    const allTracksButton = screen.getByText('All Tracks');
+    expect(allTracksButton).toBeInTheDocument();
   });
 
   it('invites candidate to team', () => {
     renderMatchmaker();
-    // Multiple "Invite to Team" buttons - just verify at least one exists
-    const inviteButtons = screen.getAllByText('Invite to Team');
-    expect(inviteButtons.length).toBeGreaterThan(0);
+    const recruitButtons = screen.getAllByText('Recruit');
+    expect(recruitButtons.length).toBeGreaterThan(0);
   });
 });

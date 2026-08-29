@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   Scale, 
   AlertTriangle, 
@@ -6,14 +6,14 @@ import {
   Sliders, 
   ExternalLink, 
   Check, 
-  ChevronRight,
-  ShieldCheck
+  ChevronRight, 
+  ShieldCheck 
 } from 'lucide-react';
 import { GithubIcon } from '../common/Icons';
 import { useEvent } from '../../context/EventContext';
 import { Submission } from '../../types';
+import { sanitizeURL } from '../../utils/security';
 
-// Known fictional demo URLs in mock data - show toast instead of navigating
 const FICTIONAL_DEMO_URLS = [
   'omninexus-ai.live',
   'zerolag.network',
@@ -33,16 +33,8 @@ export const JudgeDashboard: React.FC = () => {
     submitRubricEvaluation, 
     playSfx, 
     setCurrentView,
+    showToast
   } = useEvent();
-
-  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
-    if (isFictionalDemoUrl(url)) {
-      e.preventDefault();
-      playSfx('alert');
-      // Could add toast here - for now just alert
-      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
-    }
-  };
 
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>(submissions[0]?.id || 'sub_1');
   const [filterTrack, setFilterTrack] = useState<string>('all');
@@ -56,14 +48,30 @@ export const JudgeDashboard: React.FC = () => {
   const [feedbackPrivate, setFeedbackPrivate] = useState('Solid security architecture; verify enterprise quota limits.');
   const [submitResult, setSubmitResult] = useState<{ totalScore: number; biasDetected: boolean; biasReason?: string } | null>(null);
 
-  const selectedSub = submissions.find(s => s.id === selectedSubmissionId) || submissions[0];
+  const handleDemoClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isFictionalDemoUrl(url)) {
+      e.preventDefault();
+      playSfx('alert');
+      showToast({
+        type: 'info',
+        title: 'Demo Environment Mock',
+        message: 'This is a simulation sandbox project with simulated endpoints.'
+      });
+    }
+  }, [playSfx, showToast]);
+
+  const filteredSubmissions = useMemo(() => {
+    return submissions.filter(s => filterTrack === 'all' || s.track === filterTrack);
+  }, [submissions, filterTrack]);
+
+  const selectedSub = useMemo(() => {
+    return submissions.find(s => s.id === selectedSubmissionId) || submissions[0];
+  }, [submissions, selectedSubmissionId]);
 
   const totalScore = technical + innovation + design + impact;
-
-  // Real-time AI Bias Heuristic
   const isOutlier = totalScore >= 99 || totalScore < 65;
 
-  const handleSelectSubmission = (sub: Submission) => {
+  const handleSelectSubmission = useCallback((sub: Submission) => {
     playSfx('beep');
     setSelectedSubmissionId(sub.id);
     if (sub.rubricScores) {
@@ -75,9 +83,9 @@ export const JudgeDashboard: React.FC = () => {
     if (sub.judgeFeedbackPublic) setFeedbackPublic(sub.judgeFeedbackPublic);
     if (sub.judgeFeedbackPrivate) setFeedbackPrivate(sub.judgeFeedbackPrivate);
     setSubmitResult(null);
-  };
+  }, [playSfx]);
 
-  const handleScoreSubmit = (e: React.FormEvent) => {
+  const handleScoreSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSub) return;
 
@@ -94,9 +102,9 @@ export const JudgeDashboard: React.FC = () => {
       feedbackPrivate
     );
     setSubmitResult(res);
-  };
+  }, [selectedSub, playSfx, submitRubricEvaluation, technical, innovation, design, impact, feedbackPublic, feedbackPrivate]);
 
-  const setPreset = (type: 'balanced' | 'flawless' | 'harsh') => {
+  const setPreset = useCallback((type: 'balanced' | 'flawless' | 'harsh') => {
     playSfx('beep');
     if (type === 'balanced') {
       setTechnical(22);
@@ -114,11 +122,7 @@ export const JudgeDashboard: React.FC = () => {
       setDesign(13);
       setImpact(14);
     }
-  };
-
-  const filteredSubmissions = submissions.filter(s => 
-    filterTrack === 'all' || s.track === filterTrack
-  );
+  }, [playSfx]);
 
   return (
     <div className="space-y-8 pb-16">
@@ -173,11 +177,12 @@ export const JudgeDashboard: React.FC = () => {
         <div className="lg:col-span-4 space-y-4">
           
           <div className="flex items-center justify-between text-xs font-mono text-slate-400">
-            <span>Filter Track:</span>
+            <label htmlFor="judge-track-filter" className="text-slate-300">Filter Track:</label>
             <select
+              id="judge-track-filter"
               value={filterTrack}
               onChange={(e) => setFilterTrack(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs"
+              className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-white text-xs focus:outline-none focus:border-cyan-400"
             >
               <option value="all">All Tracks</option>
               <option value="AI & Autonomous Agents">AI & Agents</option>
@@ -187,7 +192,7 @@ export const JudgeDashboard: React.FC = () => {
             </select>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3" role="list" aria-label="Projects Evaluation Queue">
             {filteredSubmissions.map((sub) => {
               const isSelected = sub.id === selectedSubmissionId;
               const isEvaluated = sub.status === 'evaluated';
@@ -195,8 +200,12 @@ export const JudgeDashboard: React.FC = () => {
               return (
                 <div
                   key={sub.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelectSubmission(sub); }}
                   onClick={() => handleSelectSubmission(sub)}
-                  className={`p-4 rounded-2xl border cursor-pointer transition-all duration-200 ${
+                  className={`p-4 rounded-2xl border cursor-pointer transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-amber-400 ${
                     isSelected
                       ? 'bg-slate-900 border-amber-400/80 shadow-neon-indigo ring-1 ring-amber-400/50'
                       : 'bg-slate-900/60 border-white/10 hover:border-white/20 hover:bg-slate-900/90'
@@ -259,15 +268,20 @@ export const JudgeDashboard: React.FC = () => {
 
                   <div className="flex items-center gap-2 font-mono text-xs">
                     {selectedSub.githubUrl && (
-                      <a href={selectedSub.githubUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-400 text-slate-200 flex items-center gap-1.5 transition-all">
+                      <a 
+                        href={sanitizeURL(selectedSub.githubUrl)} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-400 text-slate-200 flex items-center gap-1.5 transition-all"
+                      >
                         <GithubIcon className="w-3.5 h-3.5" /> <span>Repo</span>
                       </a>
                     )}
                     {selectedSub.demoUrl && (
                       <a 
-                        href={selectedSub.demoUrl} 
+                        href={sanitizeURL(selectedSub.demoUrl)} 
                         target="_blank" 
-                        rel="noreferrer" 
+                        rel="noopener noreferrer" 
                         onClick={(e) => handleDemoClick(e, selectedSub.demoUrl!)}
                         className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1.5 transition-all"
                       >
@@ -328,10 +342,11 @@ export const JudgeDashboard: React.FC = () => {
                 {/* 1. Technical Complexity */}
                 <div className="space-y-1.5 p-4 rounded-xl bg-slate-900/80 border border-white/5">
                   <div className="flex justify-between text-xs font-mono">
-                    <span className="text-slate-200 font-semibold">1. Technical Complexity & Architecture (0-25)</span>
+                    <label htmlFor="tech-score-slider" className="text-slate-200 font-semibold">1. Technical Complexity & Architecture (0-25)</label>
                     <span className="text-cyan-400 font-bold text-sm">{technical} / 25</span>
                   </div>
                   <input
+                    id="tech-score-slider"
                     type="range"
                     min={0}
                     max={25}
@@ -350,10 +365,11 @@ export const JudgeDashboard: React.FC = () => {
                 {/* 2. Innovation & Originality */}
                 <div className="space-y-1.5 p-4 rounded-xl bg-slate-900/80 border border-white/5">
                   <div className="flex justify-between text-xs font-mono">
-                    <span className="text-slate-200 font-semibold">2. Innovation & Originality (0-25)</span>
+                    <label htmlFor="innov-score-slider" className="text-slate-200 font-semibold">2. Innovation & Originality (0-25)</label>
                     <span className="text-indigo-400 font-bold text-sm">{innovation} / 25</span>
                   </div>
                   <input
+                    id="innov-score-slider"
                     type="range"
                     min={0}
                     max={25}
@@ -372,10 +388,11 @@ export const JudgeDashboard: React.FC = () => {
                 {/* 3. Design & User Experience */}
                 <div className="space-y-1.5 p-4 rounded-xl bg-slate-900/80 border border-white/5">
                   <div className="flex justify-between text-xs font-mono">
-                    <span className="text-slate-200 font-semibold">3. Design, Polish & UX (0-25)</span>
+                    <label htmlFor="design-score-slider" className="text-slate-200 font-semibold">3. Design, Polish & UX (0-25)</label>
                     <span className="text-emerald-400 font-bold text-sm">{design} / 25</span>
                   </div>
                   <input
+                    id="design-score-slider"
                     type="range"
                     min={0}
                     max={25}
@@ -394,10 +411,11 @@ export const JudgeDashboard: React.FC = () => {
                 {/* 4. Business Impact & Viability */}
                 <div className="space-y-1.5 p-4 rounded-xl bg-slate-900/80 border border-white/5">
                   <div className="flex justify-between text-xs font-mono">
-                    <span className="text-slate-200 font-semibold">4. Business Viability & Real-World Impact (0-25)</span>
+                    <label htmlFor="impact-score-slider" className="text-slate-200 font-semibold">4. Business Viability & Real-World Impact (0-25)</label>
                     <span className="text-amber-400 font-bold text-sm">{impact} / 25</span>
                   </div>
                   <input
+                    id="impact-score-slider"
                     type="range"
                     min={0}
                     max={25}
@@ -452,10 +470,11 @@ export const JudgeDashboard: React.FC = () => {
               {/* Written Feedback Fields */}
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs font-mono text-slate-300 font-semibold block mb-1">
+                  <label htmlFor="public-feedback" className="text-xs font-mono text-slate-300 font-semibold block mb-1">
                     Public Constructive Feedback (Visible to Hackers):
                   </label>
                   <textarea
+                    id="public-feedback"
                     rows={2}
                     value={feedbackPublic}
                     onChange={(e) => setFeedbackPublic(e.target.value)}
@@ -463,10 +482,11 @@ export const JudgeDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-mono text-slate-300 font-semibold block mb-1">
+                  <label htmlFor="private-feedback" className="text-xs font-mono text-slate-300 font-semibold block mb-1">
                     Private Jury Deliberation Notes (Internal Only):
                   </label>
                   <textarea
+                    id="private-feedback"
                     rows={2}
                     value={feedbackPrivate}
                     onChange={(e) => setFeedbackPrivate(e.target.value)}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   Trophy, 
   Crown, 
@@ -7,14 +7,14 @@ import {
   TrendingDown, 
   Minus, 
   ExternalLink, 
-  X,
-  Zap
+  X, 
+  Zap 
 } from 'lucide-react';
 import { GithubIcon } from '../common/Icons';
 import { useEvent } from '../../context/EventContext';
 import { Submission } from '../../types';
+import { sanitizeURL } from '../../utils/security';
 
-// Known fictional demo URLs in mock data - show toast instead of navigating
 const FICTIONAL_DEMO_URLS = [
   'omninexus-ai.live',
   'zerolag.network',
@@ -28,34 +28,40 @@ const isFictionalDemoUrl = (url: string) => {
 };
 
 export const EsportsLeaderboard: React.FC = () => {
-  const { submissions, playSfx, triggerConfetti, simulateLivePulse } = useEvent();
+  const { submissions, playSfx, triggerConfetti, simulateLivePulse, showToast } = useEvent();
 
-  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+  const handleDemoClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
     if (isFictionalDemoUrl(url)) {
       e.preventDefault();
       playSfx('alert');
-      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
+      showToast({
+        type: 'info',
+        title: 'Demo Sandbox Prototype',
+        message: 'Live demo URL is connected to simulated environment.'
+      });
     }
-  };
+  }, [playSfx, showToast]);
 
   const [selectedTrack, setSelectedTrack] = useState<string>('all');
   const [inspectSubmission, setInspectSubmission] = useState<Submission | null>(null);
 
-  const filteredSubmissions = submissions
-    .filter(s => selectedTrack === 'all' || s.track === selectedTrack)
-    .sort((a, b) => b.totalScore - a.totalScore);
+  const filteredSubmissions = useMemo(() => {
+    return submissions
+      .filter(s => selectedTrack === 'all' || s.track === selectedTrack)
+      .sort((a, b) => b.totalScore - a.totalScore);
+  }, [submissions, selectedTrack]);
 
   const top1 = filteredSubmissions[0];
   const top2 = filteredSubmissions[1];
   const top3 = filteredSubmissions[2];
 
-  const tracks = [
+  const tracks = useMemo(() => [
     { id: 'all', label: 'All Tracks' },
     { id: 'AI & Autonomous Agents', label: 'AI & Agents' },
     { id: 'Web3 & Security', label: 'Web3 & ZK' },
     { id: 'HealthTech & Social Impact', label: 'HealthTech' },
     { id: 'Next-Gen Infrastructure', label: 'Infra & Mesh' },
-  ];
+  ], []);
 
   return (
     <div className="space-y-8 pb-16">
@@ -104,12 +110,18 @@ export const EsportsLeaderboard: React.FC = () => {
         </div>
 
         {/* Track Category Selector Filter */}
-        <div className="relative z-10 flex flex-wrap items-center justify-center gap-2 pt-6 mt-6 border-t border-white/10">
+        <div 
+          role="tablist" 
+          aria-label="Filter leaderboard by track"
+          className="relative z-10 flex flex-wrap items-center justify-center gap-2 pt-6 mt-6 border-t border-white/10"
+        >
           {tracks.map((t) => {
             const isActive = selectedTrack === t.id;
             return (
               <button
                 key={t.id}
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => {
                   playSfx('beep');
                   setSelectedTrack(t.id);
@@ -134,8 +146,12 @@ export const EsportsLeaderboard: React.FC = () => {
         {/* 2nd Place (Silver) */}
         {top2 && (
           <div 
+            role="button"
+            tabIndex={0}
+            aria-label={`Rank 2: ${top2.projectTitle} by ${top2.teamName}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setInspectSubmission(top2); }}
             onClick={() => setInspectSubmission(top2)}
-            className="order-2 md:order-1 glass-card-hover rounded-3xl border border-slate-400/40 p-6 space-y-4 text-center relative overflow-hidden cursor-pointer group"
+            className="order-2 md:order-1 glass-card-hover rounded-3xl border border-slate-400/40 p-6 space-y-4 text-center relative overflow-hidden cursor-pointer group focus:outline-none focus:ring-2 focus:ring-slate-300"
           >
             <div className="absolute top-3 left-3 px-2 py-0.5 rounded-full bg-slate-400/20 text-slate-200 border border-slate-400/40 text-[10px] font-mono font-black">
               #2 RANK
@@ -173,8 +189,12 @@ export const EsportsLeaderboard: React.FC = () => {
         {/* 1st Place (Gold / Champion) */}
         {top1 && (
           <div 
+            role="button"
+            tabIndex={0}
+            aria-label={`Grand Champion Rank 1: ${top1.projectTitle} by ${top1.teamName}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setInspectSubmission(top1); }}
             onClick={() => setInspectSubmission(top1)}
-            className="order-1 md:order-2 glass-card-glow-indigo rounded-3xl border-2 border-amber-400 p-7 space-y-5 text-center relative overflow-hidden cursor-pointer group shadow-2xl scale-[1.03]"
+            className="order-1 md:order-2 glass-card-glow-indigo rounded-3xl border-2 border-amber-400 p-7 space-y-5 text-center relative overflow-hidden cursor-pointer group shadow-2xl scale-[1.03] focus:outline-none focus:ring-2 focus:ring-amber-400"
           >
             <div className="absolute top-0 inset-x-0 bg-gradient-to-r from-amber-500 to-yellow-400 py-1 text-slate-950 font-mono font-black text-[10px] tracking-widest uppercase">
               GRAND CHAMPION (#1)
@@ -213,8 +233,12 @@ export const EsportsLeaderboard: React.FC = () => {
         {/* 3rd Place (Bronze) */}
         {top3 && (
           <div 
+            role="button"
+            tabIndex={0}
+            aria-label={`Rank 3: ${top3.projectTitle} by ${top3.teamName}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setInspectSubmission(top3); }}
             onClick={() => setInspectSubmission(top3)}
-            className="order-3 glass-card-hover rounded-3xl border border-amber-700/40 p-6 space-y-4 text-center relative overflow-hidden cursor-pointer group"
+            className="order-3 glass-card-hover rounded-3xl border border-amber-700/40 p-6 space-y-4 text-center relative overflow-hidden cursor-pointer group focus:outline-none focus:ring-2 focus:ring-amber-600"
           >
             <div className="absolute top-3 left-3 px-2 py-0.5 rounded-full bg-amber-700/20 text-amber-200 border border-amber-700/40 text-[10px] font-mono font-black">
               #3 RANK
@@ -263,7 +287,7 @@ export const EsportsLeaderboard: React.FC = () => {
           </span>
         </div>
 
-        <div className="divide-y divide-white/5">
+        <div className="divide-y divide-white/5" role="list">
           {filteredSubmissions.map((sub, index) => {
             const rank = index + 1;
             const delta = sub.rankDelta || 0;
@@ -271,11 +295,20 @@ export const EsportsLeaderboard: React.FC = () => {
             return (
               <div
                 key={sub.id}
+                role="listitem"
+                tabIndex={0}
+                aria-label={`Rank ${rank}: ${sub.projectTitle} with score ${sub.totalScore}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    playSfx('beep');
+                    setInspectSubmission(sub);
+                  }
+                }}
                 onClick={() => {
                   playSfx('beep');
                   setInspectSubmission(sub);
                 }}
-                className="py-4 px-3 rounded-2xl hover:bg-slate-900/80 cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all"
+                className="py-4 px-3 rounded-2xl hover:bg-slate-900/80 cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all focus:outline-none focus:ring-1 focus:ring-cyan-400"
               >
                 {/* Left Rank & Team info */}
                 <div className="flex items-center gap-4">
@@ -348,7 +381,12 @@ export const EsportsLeaderboard: React.FC = () => {
 
       {/* Inspect Project Modal (Deep Rubric Breakdown) */}
       {inspectSubmission && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div 
+          role="dialog" 
+          aria-modal="true" 
+          aria-labelledby="inspect-project-title"
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
+        >
           <div className="glass-card rounded-3xl border border-indigo-500/40 p-6 max-w-2xl w-full space-y-6 shadow-2xl animate-fadeIn max-h-[90vh] overflow-y-auto">
             
             {/* Modal Header */}
@@ -356,12 +394,13 @@ export const EsportsLeaderboard: React.FC = () => {
               <div className="flex items-center gap-3">
                 <img src={inspectSubmission.teamAvatar} alt={inspectSubmission.teamName} className="w-12 h-12 rounded-2xl object-cover border border-white/10" />
                 <div>
-                  <h3 className="font-bold text-lg text-white font-sans">{inspectSubmission.projectTitle}</h3>
+                  <h3 id="inspect-project-title" className="font-bold text-lg text-white font-sans">{inspectSubmission.projectTitle}</h3>
                   <div className="text-xs font-mono text-cyan-400">Team {inspectSubmission.teamName} • {inspectSubmission.track}</div>
                 </div>
               </div>
               <button
                 onClick={() => setInspectSubmission(null)}
+                aria-label="Close modal"
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -382,15 +421,20 @@ export const EsportsLeaderboard: React.FC = () => {
 
               <div className="pt-2 flex items-center gap-3 font-mono">
                 {inspectSubmission.githubUrl && (
-                  <a href={inspectSubmission.githubUrl} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center gap-1">
+                  <a 
+                    href={sanitizeURL(inspectSubmission.githubUrl)} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-cyan-400 hover:underline flex items-center gap-1"
+                  >
                     <GithubIcon className="w-3.5 h-3.5" /> GitHub Source
                   </a>
                 )}
                 {inspectSubmission.demoUrl && (
                   <a 
-                    href={inspectSubmission.demoUrl} 
+                    href={sanitizeURL(inspectSubmission.demoUrl)} 
                     target="_blank" 
-                    rel="noreferrer" 
+                    rel="noopener noreferrer" 
                     onClick={(e) => handleDemoClick(e, inspectSubmission.demoUrl!)}
                     className="text-indigo-400 hover:underline flex items-center gap-1"
                   >

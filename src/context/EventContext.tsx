@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { 
   UserProfile, 
@@ -34,8 +35,22 @@ import {
   INITIAL_AI_INSIGHTS,
   INITIAL_AI_CHAT_MESSAGES
 } from '../data/mockData';
+import { 
+  sanitizeTextInput, 
+  sanitizeURL, 
+  sanitizeHTML, 
+  ClientRateLimiter, 
+  generateSecureId,
+  detectBiasAnomaly
+} from '../utils/security';
+import { ToastMessage, ToastContainer } from '../components/common/Toast';
 
-interface EventContextType {
+// Rate limiter instances for abuse protection
+const chatRateLimiter = new ClientRateLimiter(15, 60000); // 15 msgs/min
+const broadcastRateLimiter = new ClientRateLimiter(10, 60000); // 10 broadcasts/min
+const ticketRateLimiter = new ClientRateLimiter(8, 60000); // 8 tickets/min
+
+export interface EventContextType {
   // Navigation & Role & Event Type
   currentView: ViewMode;
   setCurrentView: (view: ViewMode) => void;
@@ -58,6 +73,7 @@ interface EventContextType {
   announcements: Announcement[];
   venueZones: VenueZone[];
   analytics: CrowdAnalytics;
+  timeRemainingSeconds: number;
   liveEvents: LiveEventItem[];
   supportTickets: SupportTicket[];
   aiInsights: AIInsightAlert[];
@@ -70,6 +86,11 @@ interface EventContextType {
   setIsAudioEnabled: (enabled: boolean) => void;
   playSfx: (type: 'beep' | 'success' | 'alert' | 'cheer') => void;
 
+  // In-app Toasts
+  toasts: ToastMessage[];
+  showToast: (toast: Omit<ToastMessage, 'id'>) => void;
+  dismissToast: (id: string) => void;
+
   // Actions
   triggerConfetti: () => void;
   checkInTicket: (ticketOrHash: string, zone?: string) => { success: boolean; message: string; participantName?: string };
@@ -80,7 +101,7 @@ interface EventContextType {
   autoAssembleDreamTeam: () => void;
   simulateLivePulse: (type?: string) => void;
 
-  // New Actions: Support Tickets & AI Assistant & Insights
+  // Support Tickets & AI Assistant & Insights
   createSupportTicket: (ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'status'>) => void;
   claimSupportTicket: (ticketId: string, mentorName: string) => void;
   resolveSupportTicket: (ticketId: string) => void;
@@ -88,7 +109,7 @@ interface EventContextType {
   dismissAIInsight: (insightId: string) => void;
 }
 
-const EventContext = createContext<EventContextType | undefined>(undefined);
+export const EventContext = createContext<EventContextType | undefined>(undefined);
 
 export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentView, setCurrentView] = useState<ViewMode>('landing');
@@ -106,6 +127,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
   const [venueZones, setVenueZones] = useState<VenueZone[]>(INITIAL_VENUE_ZONES);
   const [analytics, setAnalytics] = useState<CrowdAnalytics>(INITIAL_ANALYTICS);
+  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(INITIAL_ANALYTICS.timeRemainingSeconds);
   const [liveEvents, setLiveEvents] = useState<LiveEventItem[]>(INITIAL_LIVE_EVENTS);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(INITIAL_SUPPORT_TICKETS);
   const [aiInsights, setAiInsights] = useState<AIInsightAlert[]>(INITIAL_AI_INSIGHTS);
@@ -113,6 +135,22 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [isLiveSimulating, setIsLiveSimulating] = useState<boolean>(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const showToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
+    const id = generateSecureId('toast_');
+    const newToast: ToastMessage = { ...toast, id };
+    setToasts(prev => [...prev, newToast]);
+
+    const duration = toast.durationMs || 4000;
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, duration);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   // Audio synthesizer for interactive cyber sound effects
   const playSfx = useCallback((type: 'beep' | 'success' | 'alert' | 'cheer') => {
@@ -160,7 +198,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         osc.stop(ctx.currentTime + 0.5);
       }
     } catch {
-      // Browser audio policy guard
+      // Audio policy guard
     }
   }, [isAudioEnabled]);
 
@@ -178,13 +216,21 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [playSfx]);
 
-  const updateParticipantProfile = (updates: Partial<UserProfile>) => {
-    setParticipantUser(prev => ({ ...prev, ...updates }));
-  };
+  const updateParticipantProfile = useCallback((updates: Partial<UserProfile>) => {
+    setParticipantUser(prev => ({
+      ...prev,
+      ...updates,
+      bio: updates.bio ? sanitizeTextInput(updates.bio, 500) : prev.bio,
+      github: updates.github ? sanitizeURL(updates.github) : prev.github,
+      linkedin: updates.linkedin ? sanitizeURL(updates.linkedin) : prev.linkedin,
+    }));
+  }, []);
 
-  // 1. QR Check-in Station Action
-  const checkInTicket = (ticketOrHash: string, zone: string = 'Main Stage Arena') => {
-    const isMatched = ticketOrHash.toUpperCase().includes('EVOS') || ticketOrHash.includes('sig') || ticketOrHash.length > 4;
+  // 1. QR Check-in Station Action with Input Sanitization
+  const checkInTicket = useCallback((ticketOrHash: string, zone: string = 'Main Stage Arena') => {
+    const cleanTicket = sanitizeTextInput(ticketOrHash, 100);
+    const cleanZone = sanitizeTextInput(zone, 100);
+    const isMatched = cleanTicket.toUpperCase().includes('EVOS') || cleanTicket.includes('sig') || cleanTicket.length > 4;
     
     if (isMatched) {
       const names = ['Kavita Rao', 'Jordan Hayes', 'Daniel Kim', 'Samantha Miller', 'Tariq Al-Mansoor'];
@@ -202,7 +248,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
 
       setVenueZones(prev => prev.map(z => {
-        if (z.name === zone || z.id === 'z1') {
+        if (z.name === cleanZone || z.id === 'z1') {
           const newOcc = Math.min(z.capacity, z.occupancy + 1);
           return {
             ...z,
@@ -215,9 +261,9 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }));
 
       const newEvt: LiveEventItem = {
-        id: `evt_${Date.now()}`,
+        id: generateSecureId('evt_'),
         type: 'CHECK_IN',
-        title: `${randomName} scanned pass at ${zone}`,
+        title: `${randomName} scanned pass at ${cleanZone}`,
         description: `Ticket verified. Assigned to Table #${Math.floor(Math.random() * 40) + 1}`,
         timestamp: 'Just now',
         badgeColor: '#06B6D4'
@@ -238,15 +284,26 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       success: false,
       message: 'Invalid ticket signature. Please verify with helpdesk.'
     };
-  };
+  }, [playSfx]);
 
-  // 2. AI Multi-Channel Announcement Assistant
-  const createAnnouncementFromPrompt = (rawPrompt: string, priority: 'normal' | 'high' | 'urgent' | 'emergency' = 'normal') => {
-    const cleanPrompt = rawPrompt.trim();
+  // 2. AI Multi-Channel Announcement Assistant with Rate Limiting & Sanitization
+  const createAnnouncementFromPrompt = useCallback((
+    rawPrompt: string, 
+    priority: 'normal' | 'high' | 'urgent' | 'emergency' = 'normal'
+  ): Announcement => {
+    if (!broadcastRateLimiter.isAllowed('broadcast')) {
+      showToast({
+        type: 'warning',
+        title: 'Rate Limit Warning',
+        message: 'Broadcasting throttled. Please wait a few seconds before dispatching another announcement.'
+      });
+    }
+
+    const cleanPrompt = sanitizeTextInput(rawPrompt, 500);
     const isUrgent = priority === 'urgent' || priority === 'emergency';
     
     const newAnnouncement: Announcement = {
-      id: `ann_${Date.now()}`,
+      id: generateSecureId('ann_'),
       title: isUrgent ? `🚨 ${cleanPrompt.slice(0, 45)}...` : `📢 ${cleanPrompt.slice(0, 45)}...`,
       rawPrompt: cleanPrompt,
       priority,
@@ -260,7 +317,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         sms: `EVENTOS AI: ${cleanPrompt} — Details at os.ai/live`,
         email: {
           subject: `${isUrgent ? '[URGENT] ' : ''}Important Event Update: ${cleanPrompt.slice(0, 40)}`,
-          htmlSnippet: `<div style="font-family:sans-serif; color:#1e293b;"><h3>Hackathon Update</h3><p>${cleanPrompt}</p><p>Check the live dashboard for real-time room assignments and schedules.</p></div>`
+          htmlSnippet: `<div style="font-family:sans-serif; color:#1e293b;"><h3>Hackathon Update</h3><p>${sanitizeHTML(cleanPrompt)}</p><p>Check the live dashboard for real-time room assignments and schedules.</p></div>`
         },
         slackDiscord: `@everyone ${isUrgent ? '🚨 **URGENT BROADCAST**' : '📢 **ANNOUNCEMENT**'}\n${cleanPrompt}\n*Broadcasted via EventOS AI Mission Control*`
       },
@@ -272,7 +329,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setAnnouncements(prev => [newAnnouncement, ...prev]);
 
     const newEvt: LiveEventItem = {
-      id: `evt_${Date.now()}`,
+      id: generateSecureId('evt_'),
       type: 'ANNOUNCEMENT',
       title: `Broadcast: ${newAnnouncement.title}`,
       description: `Dispatched across Push (${newAnnouncement.deliveredCount}), SMS & Discord`,
@@ -282,24 +339,35 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setLiveEvents(prev => [newEvt, ...prev.slice(0, 19)]);
     playSfx('alert');
 
-    return newAnnouncement;
-  };
+    showToast({
+      type: 'success',
+      title: 'Announcement Dispatched',
+      message: `Broadcasting across Push, SMS, Email, & Discord.`
+    });
 
-  // 3. Smart Rubric Scoring & AI Bias Detection
-  const submitRubricEvaluation = (
+    return newAnnouncement;
+  }, [analytics.totalCheckedIn, playSfx, showToast]);
+
+  // 3. Smart Rubric Scoring & AI Bias Detection (±2σ Outlier Audits)
+  const submitRubricEvaluation = useCallback((
     submissionId: string, 
     scores: RubricScores, 
     feedbackPublic: string, 
     feedbackPrivate: string
   ) => {
-    const rawTotal = scores.technicalComplexity + scores.innovation + scores.designAndUX + scores.businessImpact;
-    
-    const isAnomaly = rawTotal >= 99 || rawTotal < 65;
-    const biasReason = isAnomaly 
-      ? rawTotal >= 99 
-        ? 'AI Bias Alert: Score is 2.4 σ higher than track median. Verified as potential lenient grading.' 
-        : 'AI Bias Alert: Score is 2.1 σ below rubric norm. Flagged for secondary judge review.'
-      : undefined;
+    // Validate score bounds (0-25 each)
+    const validScores: RubricScores = {
+      technicalComplexity: Math.max(0, Math.min(25, Number(scores.technicalComplexity) || 0)),
+      innovation: Math.max(0, Math.min(25, Number(scores.innovation) || 0)),
+      designAndUX: Math.max(0, Math.min(25, Number(scores.designAndUX) || 0)),
+      businessImpact: Math.max(0, Math.min(25, Number(scores.businessImpact) || 0)),
+    };
+
+    const rawTotal = validScores.technicalComplexity + validScores.innovation + validScores.designAndUX + validScores.businessImpact;
+    const { isAnomaly, reason: biasReason } = detectBiasAnomaly(rawTotal);
+
+    const cleanPublic = sanitizeTextInput(feedbackPublic, 1000);
+    const cleanPrivate = sanitizeTextInput(feedbackPrivate, 1000);
 
     setSubmissions(prev => {
       const updated = prev.map(sub => {
@@ -307,10 +375,10 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const rankDelta = rawTotal > sub.totalScore ? 1 : rawTotal < sub.totalScore ? -1 : 0;
           return {
             ...sub,
-            rubricScores: scores,
+            rubricScores: validScores,
             totalScore: Number(rawTotal.toFixed(1)),
-            judgeFeedbackPublic: feedbackPublic,
-            judgeFeedbackPrivate: feedbackPrivate,
+            judgeFeedbackPublic: cleanPublic,
+            judgeFeedbackPrivate: cleanPrivate,
             evaluatedByJudgeId: judgeUser.id,
             biasAnomalyDetected: isAnomaly,
             biasAnomalyReason: biasReason,
@@ -333,7 +401,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const evaluatedSub = submissions.find(s => s.id === submissionId);
     const newEvt: LiveEventItem = {
-      id: `evt_${Date.now()}`,
+      id: generateSecureId('evt_'),
       type: 'SCORE_UPDATE',
       title: `Judge ${judgeUser.name} scored ${evaluatedSub?.teamName || 'Team'}`,
       description: `Final Score: ${rawTotal.toFixed(1)}/100 ${isAnomaly ? '⚠️ [AI Bias Flagged]' : '✅ [Rubric Verified]'}`,
@@ -347,15 +415,21 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       triggerConfetti();
     }
 
+    showToast({
+      type: isAnomaly ? 'warning' : 'success',
+      title: isAnomaly ? 'Score Flagged by Bias AI' : 'Rubric Submitted',
+      message: `Score ${rawTotal.toFixed(1)} recorded for ${evaluatedSub?.teamName || 'Team'}.`
+    });
+
     return {
       totalScore: rawTotal,
       biasDetected: isAnomaly,
       biasReason
     };
-  };
+  }, [judgeUser.id, judgeUser.name, playSfx, showToast, submissions, triggerConfetti]);
 
-  // 4. Participant Project Submission
-  const submitProject = (projectData: {
+  // 4. Participant Project Submission with URL and Text Sanitization
+  const submitProject = useCallback((projectData: {
     title: string;
     tagline: string;
     description: string;
@@ -364,18 +438,26 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     githubUrl: string;
     demoUrl: string;
   }) => {
+    const cleanTitle = sanitizeTextInput(projectData.title, 120);
+    const cleanTagline = sanitizeTextInput(projectData.tagline, 200);
+    const cleanDescription = sanitizeTextInput(projectData.description, 2000);
+    const cleanTechStack = projectData.techStack.map(t => sanitizeTextInput(t, 50)).filter(Boolean);
+    const cleanTrack = sanitizeTextInput(projectData.track, 100);
+    const cleanGithub = sanitizeURL(projectData.githubUrl);
+    const cleanDemo = sanitizeURL(projectData.demoUrl);
+
     const newSub: Submission = {
-      id: `sub_${Date.now()}`,
+      id: generateSecureId('sub_'),
       teamId: 'tm_1',
       teamName: 'OmniNexus AI',
       teamAvatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80',
-      projectTitle: projectData.title,
-      tagline: projectData.tagline,
-      description: projectData.description,
-      techStack: projectData.techStack,
-      track: projectData.track,
-      githubUrl: projectData.githubUrl,
-      demoUrl: projectData.demoUrl,
+      projectTitle: cleanTitle,
+      tagline: cleanTagline,
+      description: cleanDescription,
+      techStack: cleanTechStack,
+      track: cleanTrack,
+      githubUrl: cleanGithub,
+      demoUrl: cleanDemo,
       submittedAt: 'Just now',
       rubricScores: { technicalComplexity: 25, innovation: 25, designAndUX: 24, businessImpact: 24 },
       totalScore: 98.0,
@@ -394,20 +476,26 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }));
 
     const newEvt: LiveEventItem = {
-      id: `evt_${Date.now()}`,
+      id: generateSecureId('evt_'),
       type: 'SUBMISSION',
-      title: `OmniNexus AI submitted "${projectData.title}"`,
-      description: `Track: ${projectData.track} • Ready for Smart Judging`,
+      title: `OmniNexus AI submitted "${cleanTitle}"`,
+      description: `Track: ${cleanTrack} • Ready for Smart Judging`,
       timestamp: 'Just now',
       badgeColor: '#6366F1'
     };
     setLiveEvents(prev => [newEvt, ...prev.slice(0, 19)]);
     playSfx('success');
     triggerConfetti();
-  };
+
+    showToast({
+      type: 'success',
+      title: 'Project Submitted!',
+      message: `"${cleanTitle}" is queued for evaluation. +500 XP Earned!`
+    });
+  }, [playSfx, showToast, triggerConfetti]);
 
   // 5. AI Matchmaker: Invite & Auto-Assemble
-  const inviteCandidateToTeam = (candidateId: string) => {
+  const inviteCandidateToTeam = useCallback((candidateId: string) => {
     const candidate = candidates.find(c => c.id === candidateId);
     if (!candidate) return;
 
@@ -434,7 +522,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCandidates(prev => prev.filter(c => c.id !== candidateId));
 
     const newEvt: LiveEventItem = {
-      id: `evt_${Date.now()}`,
+      id: generateSecureId('evt_'),
       type: 'TEAM_MATCH',
       title: `${candidate.name} joined OmniNexus AI!`,
       description: `Role: ${candidate.preferredRole} • AI Compatibility: ${candidate.compatibilityScore}%`,
@@ -443,26 +531,44 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setLiveEvents(prev => [newEvt, ...prev.slice(0, 19)]);
     playSfx('success');
-  };
 
-  const autoAssembleDreamTeam = () => {
+    showToast({
+      type: 'success',
+      title: 'Teammate Recruited',
+      message: `${candidate.name} joined your roster. Compatibility: ${candidate.compatibilityScore}%`
+    });
+  }, [candidates, playSfx, showToast]);
+
+  const autoAssembleDreamTeam = useCallback(() => {
     candidates.forEach(cand => {
       inviteCandidateToTeam(cand.id);
     });
     triggerConfetti();
-  };
+  }, [candidates, inviteCandidateToTeam, triggerConfetti]);
 
-  // 6. Support Tickets Actions
-  const createSupportTicket = (ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'status'>) => {
+  // 6. Support Tickets Actions with Sanitization & Rate Limit
+  const createSupportTicket = useCallback((ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'status'>) => {
+    if (!ticketRateLimiter.isAllowed('ticket')) {
+      showToast({
+        type: 'warning',
+        title: 'Please wait',
+        message: 'Support ticket submission throttled. Please try again shortly.'
+      });
+      return;
+    }
+
     const newTkt: SupportTicket = {
       ...ticket,
-      id: `tkt_${Date.now()}`,
+      authorName: sanitizeTextInput(ticket.authorName, 100),
+      tableNumber: sanitizeTextInput(ticket.tableNumber, 50),
+      description: sanitizeTextInput(ticket.description, 1000),
+      id: generateSecureId('tkt_'),
       createdAt: 'Just now',
       status: 'open'
     };
     setSupportTickets(prev => [newTkt, ...prev]);
     const newEvt: LiveEventItem = {
-      id: `evt_${Date.now()}`,
+      id: generateSecureId('evt_'),
       type: 'SUPPORT_TICKET',
       title: `Help Request: ${newTkt.category}`,
       description: `${newTkt.authorName} at ${newTkt.tableNumber}`,
@@ -471,39 +577,68 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setLiveEvents(prev => [newEvt, ...prev.slice(0, 19)]);
     playSfx('alert');
-  };
 
-  const claimSupportTicket = (ticketId: string, mentorName: string) => {
-    setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'in_progress', assignedTo: mentorName } : t));
+    showToast({
+      type: 'info',
+      title: 'Ticket Dispatched',
+      message: `Staff alerted for Table ${newTkt.tableNumber}.`
+    });
+  }, [playSfx, showToast]);
+
+  const claimSupportTicket = useCallback((ticketId: string, mentorName: string) => {
+    const cleanMentor = sanitizeTextInput(mentorName, 100);
+    setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'in_progress', assignedTo: cleanMentor } : t));
     playSfx('beep');
-  };
+    showToast({
+      type: 'info',
+      title: 'Ticket Claimed',
+      message: `Assigned to ${cleanMentor}. Heading to attendee table.`
+    });
+  }, [playSfx, showToast]);
 
-  const resolveSupportTicket = (ticketId: string) => {
+  const resolveSupportTicket = useCallback((ticketId: string) => {
     setSupportTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'resolved' } : t));
     playSfx('success');
-  };
+    showToast({
+      type: 'success',
+      title: 'Ticket Resolved',
+      message: 'Support request marked complete.'
+    });
+  }, [playSfx, showToast]);
 
-  // 7. AI Assistant Chat Co-Pilot
-  const sendAIChatMessage = (userText: string) => {
+  // 7. AI Assistant Chat Co-Pilot with Sanitization & Rate Limit
+  const sendAIChatMessage = useCallback((userText: string) => {
+    if (!chatRateLimiter.isAllowed('chat')) {
+      showToast({
+        type: 'warning',
+        title: 'Chat Rate Limit',
+        message: 'You are sending messages too quickly. Please pause for a moment.'
+      });
+      return;
+    }
+
+    const cleanText = sanitizeTextInput(userText, 500);
+    if (!cleanText) return;
+
     const userMsg: AIChatMessage = {
-      id: `msg_${Date.now()}`,
+      id: generateSecureId('msg_'),
       sender: 'user',
-      text: userText,
+      text: cleanText,
       timestamp: 'Just now'
     };
 
     setAiChatMessages(prev => [...prev, userMsg]);
     playSfx('beep');
 
-    // Simulate smart contextual assistant response
+    // Contextual intelligent assistant simulation
     setTimeout(() => {
       let reply = "I'm checking the event operating system for you.";
-      const lower = userText.toLowerCase();
+      const lower = cleanText.toLowerCase();
 
       if (lower.includes('wifi') || lower.includes('password') || lower.includes('internet')) {
         reply = "📶 The high-speed event WiFi SSID is **HackMatrix-5G-Ultra** and the WPA2 password is **`build_the_future_2026`**. Dedicated ethernet drops are available in Hub 01 & Hub 02.";
       } else if (lower.includes('deadline') || lower.includes('submission') || lower.includes('freeze')) {
-        reply = "⏰ Submissions lock at **11:00 AM sharp (Code Freeze)**. Please upload your GitHub repo, a working live demo link, and a 2-minute Loom/YouTube walkthrough before the timer runs out.";
+        reply = "⏰ Submissions lock at **11:00 AM sharp (Code Freeze)**. Please upload your GitHub repo, a working live demo link, and a 2-minute walkthrough before the timer runs out.";
       } else if (lower.includes('rubric') || lower.includes('judging') || lower.includes('score')) {
         reply = "⚖️ Projects are judged on 4 weighted pillars (25 points each): **1. Technical Complexity**, **2. Innovation & Originality**, **3. Design & UX**, and **4. Business Viability & Impact**. Real-time AI bias audits ensure fair score normalization.";
       } else if (lower.includes('food') || lower.includes('pizza') || lower.includes('boba') || lower.includes('dinner')) {
@@ -511,11 +646,11 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else if (lower.includes('mentor') || lower.includes('help') || lower.includes('bug')) {
         reply = "💡 Mentors specializing in PyTorch, Rust, Smart Contracts, and Cloud Architecture are available in **Mentorship Pod M**. You can also file a ticket directly from your dashboard!";
       } else {
-        reply = `⚡ EventOS AI analyzed your inquiry: "${userText}". Our staff and mentors have been alerted. You can explore the live schedule, find teammates in the AI Matchmaker, or submit your project from the navigation tabs above!`;
+        reply = `⚡ EventOS AI analyzed your inquiry: "${cleanText}". Our staff and mentors have been alerted. You can explore the live schedule, find teammates in the AI Matchmaker, or submit your project from the navigation tabs above!`;
       }
 
       const aiReplyMsg: AIChatMessage = {
-        id: `msg_${Date.now() + 1}`,
+        id: generateSecureId('msg_'),
         sender: 'assistant',
         text: reply,
         timestamp: 'Just now'
@@ -523,13 +658,13 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setAiChatMessages(prev => [...prev, aiReplyMsg]);
       playSfx('beep');
-    }, 600);
-  };
+    }, 500);
+  }, [playSfx, showToast]);
 
-  const dismissAIInsight = (insightId: string) => {
+  const dismissAIInsight = useCallback((insightId: string) => {
     setAiInsights(prev => prev.filter(i => i.id !== insightId));
     playSfx('beep');
-  };
+  }, [playSfx]);
 
   // 8. Live WebSocket Simulator
   const simulateLivePulse = useCallback((forcedType?: string) => {
@@ -546,7 +681,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }));
       setLiveEvents(prev => [
         {
-          id: `evt_${Date.now()}`,
+          id: generateSecureId('evt_'),
           type: 'CHECK_IN',
           title: `${randomName} checked in at Main Gates`,
           description: `Fast-track pass scanned • Assigned Pod #${Math.floor(Math.random() * 20) + 1}`,
@@ -556,6 +691,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev.slice(0, 19)
       ]);
     } else if (chosenType === 'SCORE_UPDATE') {
+      if (submissions.length === 0) return;
       const randomSubIndex = Math.floor(Math.random() * submissions.length);
       const sub = submissions[randomSubIndex];
       const delta = (Math.random() * 1.5 - 0.5);
@@ -568,7 +704,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setLiveEvents(prev => [
         {
-          id: `evt_${Date.now()}`,
+          id: generateSecureId('evt_'),
           type: 'SCORE_UPDATE',
           title: `Smart Score Update: ${sub.teamName}`,
           description: `Aggregate updated to ${newScore.toFixed(1)}/100 (Judge Evaluation verified)`,
@@ -590,6 +726,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [submissions]);
 
+  // Simulation interval
   useEffect(() => {
     if (!isLiveSimulating) return;
 
@@ -600,66 +737,113 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(interval);
   }, [isLiveSimulating, simulateLivePulse]);
 
+  // 1-second countdown timer isolated without replacing full analytics object
   useEffect(() => {
     const timer = setInterval(() => {
-      setAnalytics(prev => ({
-        ...prev,
-        timeRemainingSeconds: Math.max(0, prev.timeRemainingSeconds - 1)
-      }));
+      setTimeRemainingSeconds(prev => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
+  const memoizedAnalytics = useMemo(() => ({
+    ...analytics,
+    timeRemainingSeconds
+  }), [analytics, timeRemainingSeconds]);
+
+  const contextValue = useMemo(() => ({
+    currentView,
+    setCurrentView,
+    activeRole,
+    setActiveRole,
+    currentEventType,
+    setCurrentEventType,
+    participantUser,
+    organizerUser,
+    judgeUser,
+    mentorUser,
+    updateParticipantProfile,
+    teams,
+    candidates,
+    submissions,
+    announcements,
+    venueZones,
+    analytics: memoizedAnalytics,
+    timeRemainingSeconds,
+    liveEvents,
+    supportTickets,
+    aiInsights,
+    aiChatMessages,
+    isLiveSimulating,
+    setIsLiveSimulating,
+    isAudioEnabled,
+    setIsAudioEnabled,
+    playSfx,
+    toasts,
+    showToast,
+    dismissToast,
+    triggerConfetti,
+    checkInTicket,
+    createAnnouncementFromPrompt,
+    submitRubricEvaluation,
+    submitProject,
+    inviteCandidateToTeam,
+    autoAssembleDreamTeam,
+    simulateLivePulse,
+    createSupportTicket,
+    claimSupportTicket,
+    resolveSupportTicket,
+    sendAIChatMessage,
+    dismissAIInsight
+  }), [
+    currentView,
+    activeRole,
+    currentEventType,
+    participantUser,
+    organizerUser,
+    judgeUser,
+    mentorUser,
+    updateParticipantProfile,
+    teams,
+    candidates,
+    submissions,
+    announcements,
+    venueZones,
+    memoizedAnalytics,
+    timeRemainingSeconds,
+    liveEvents,
+    supportTickets,
+    aiInsights,
+    aiChatMessages,
+    isLiveSimulating,
+    isAudioEnabled,
+    playSfx,
+    toasts,
+    showToast,
+    dismissToast,
+    triggerConfetti,
+    checkInTicket,
+    createAnnouncementFromPrompt,
+    submitRubricEvaluation,
+    submitProject,
+    inviteCandidateToTeam,
+    autoAssembleDreamTeam,
+    simulateLivePulse,
+    createSupportTicket,
+    claimSupportTicket,
+    resolveSupportTicket,
+    sendAIChatMessage,
+    dismissAIInsight
+  ]);
+
   return (
-    <EventContext.Provider
-      value={{
-        currentView,
-        setCurrentView,
-        activeRole,
-        setActiveRole,
-        currentEventType,
-        setCurrentEventType,
-        participantUser,
-        organizerUser,
-        judgeUser,
-        mentorUser,
-        updateParticipantProfile,
-        teams,
-        candidates,
-        submissions,
-        announcements,
-        venueZones,
-        analytics,
-        liveEvents,
-        supportTickets,
-        aiInsights,
-        aiChatMessages,
-        isLiveSimulating,
-        setIsLiveSimulating,
-        isAudioEnabled,
-        setIsAudioEnabled,
-        playSfx,
-        triggerConfetti,
-        checkInTicket,
-        createAnnouncementFromPrompt,
-        submitRubricEvaluation,
-        submitProject,
-        inviteCandidateToTeam,
-        autoAssembleDreamTeam,
-        simulateLivePulse,
-        createSupportTicket,
-        claimSupportTicket,
-        resolveSupportTicket,
-        sendAIChatMessage,
-        dismissAIInsight
-      }}
-    >
+    <EventContext.Provider value={contextValue}>
       {children}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </EventContext.Provider>
   );
 };
 
-export const useEvent = () => {
+export const useEvent = (): EventContextType => {
   const context = useContext(EventContext);
   if (!context) {
     throw new Error('useEvent must be used within an EventProvider');

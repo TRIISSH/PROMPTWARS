@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   QrCode, 
   CheckCircle2, 
@@ -7,12 +7,13 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useEvent } from '../../context/EventContext';
+import { sanitizeTextInput } from '../../utils/security';
 
 export const QRScannerModal: React.FC = () => {
   const { checkInTicket, playSfx, analytics } = useEvent();
   const [ticketInput, setTicketInput] = useState('EVOS-2026-X892');
   const [scanResult, setScanResult] = useState<{ success: boolean; message: string; participantName?: string } | null>(null);
-  const [isScanning, _setIsScanning] = useState(true);
+  const [isScanning] = useState(true);
   const [selectedZone, setSelectedZone] = useState('Main Stage Arena');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -35,8 +36,8 @@ export const QRScannerModal: React.FC = () => {
     }
   }, [ticketInput]);
 
-  const handleScan = (codeToScan?: string) => {
-    const code = codeToScan || ticketInput;
+  const handleScan = useCallback((codeToScan?: string) => {
+    const code = sanitizeTextInput(codeToScan || ticketInput, 100);
     if (!code.trim()) return;
 
     playSfx('beep');
@@ -44,19 +45,18 @@ export const QRScannerModal: React.FC = () => {
     setScanResult(result);
 
     setTimeout(() => {
-      // Auto-clear result notice after 4 seconds
       setScanResult(null);
     }, 4500);
-  };
+  }, [ticketInput, playSfx, checkInTicket, selectedZone]);
 
-  const handleBatchScan = (count: number) => {
+  const handleBatchScan = useCallback((count: number) => {
     playSfx('cheer');
     for (let i = 0; i < count; i++) {
       setTimeout(() => {
         checkInTicket(`EVOS-BATCH-${Date.now()}-${i}`, selectedZone);
       }, i * 150);
     }
-  };
+  }, [playSfx, checkInTicket, selectedZone]);
 
   return (
     <div className="glass-card rounded-2xl border border-white/10 p-5 space-y-6">
@@ -129,8 +129,9 @@ export const QRScannerModal: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between text-xs font-mono text-slate-400">
-            <span>Destination Gate:</span>
+            <label htmlFor="scanner-gate-select">Destination Gate:</label>
             <select
+              id="scanner-gate-select"
               value={selectedZone}
               onChange={(e) => setSelectedZone(e.target.value)}
               className="bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-cyan-400"
@@ -148,84 +149,110 @@ export const QRScannerModal: React.FC = () => {
           
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-xs font-mono text-slate-300 font-semibold block">
-                Manual Ticket Code / Cryptographic Signature:
+              <label htmlFor="ticket-sig-input" className="text-xs font-mono text-slate-300 font-semibold block">
+                Manual Cryptographic Ticket Code Entry:
               </label>
               <div className="flex gap-2">
                 <input
+                  id="ticket-sig-input"
                   type="text"
                   value={ticketInput}
                   onChange={(e) => setTicketInput(e.target.value)}
                   placeholder="e.g. EVOS-2026-X892"
-                  className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white font-mono placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
+                  className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono uppercase placeholder:text-slate-600 focus:outline-none focus:border-cyan-400"
                 />
                 <button
                   type="button"
                   onClick={() => handleScan()}
-                  className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono flex items-center gap-1.5 transition-all shrink-0"
+                  className="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono transition-all"
                 >
-                  <UserCheck className="w-4 h-4" />
-                  <span>Verify Pass</span>
+                  Verify
                 </button>
               </div>
             </div>
 
-            {/* Scan Feedback Banner */}
-            {scanResult && (
-              <div className={`p-4 rounded-xl border text-xs font-mono flex items-start gap-3 animate-fadeIn ${
-                scanResult.success 
-                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300' 
-                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-              }`}>
-                {scanResult.success ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-                )}
-                <div>
-                  <div className="font-bold text-sm text-white">
-                    {scanResult.success ? `Welcome, ${scanResult.participantName}!` : 'Verification Failed'}
-                  </div>
-                  <p className="mt-0.5 text-slate-300 leading-relaxed">{scanResult.message}</p>
-                  {scanResult.success && (
-                    <div className="mt-2 text-[10px] text-cyan-300">
-                      Assigned Gate: <strong>{selectedZone}</strong> • Digital swag bag unlocked
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Quick Fast-Track Batch Testing */}
-            <div className="space-y-2 pt-2">
+            {/* Quick Preset Test Passes */}
+            <div className="space-y-1.5">
               <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
-                Organizer Stress Test & Batch Simulation:
+                Quick Sample Ticket Signature Passes:
               </span>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                {[
+                  { label: 'Alex Rivera (Apex)', code: 'EVOS-2026-X892' },
+                  { label: 'Kavita Rao (Lead)', code: 'EVOS-2026-B319' },
+                  { label: 'Daniel Kim (AI/ML)', code: 'EVOS-2026-M442' },
+                  { label: 'Invalid Pass (Test)', code: 'ERR-INVALID-SIG' },
+                ].map((sample, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setTicketInput(sample.code);
+                      handleScan(sample.code);
+                    }}
+                    className="p-2.5 rounded-xl bg-slate-900/80 border border-white/10 hover:border-cyan-400/50 hover:bg-slate-800 text-left text-[11px] text-slate-300 transition-all truncate"
+                  >
+                    🎫 {sample.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Batch Simulator */}
+            <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-500/20 space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-indigo-300 font-semibold">Simulate Queue Influx:</span>
+                <span className="text-[10px] text-slate-400">Stress Test Heatmaps</span>
+              </div>
+              <div className="flex gap-2 font-mono text-xs">
                 <button
                   type="button"
                   onClick={() => handleBatchScan(5)}
-                  className="p-3 rounded-xl bg-slate-900/80 border border-white/10 hover:border-cyan-400/40 hover:bg-slate-800 text-left text-xs font-mono text-slate-200 transition-all"
+                  className="flex-1 py-2 rounded-lg bg-indigo-600/40 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/30 transition-all font-bold"
                 >
-                  <div className="font-bold text-cyan-400">+5 Fast Check-In</div>
-                  <div className="text-[10px] text-slate-400">Simulate bus arrival</div>
+                  +5 Check-Ins
                 </button>
-
                 <button
                   type="button"
                   onClick={() => handleBatchScan(15)}
-                  className="p-3 rounded-xl bg-slate-900/80 border border-white/10 hover:border-indigo-400/40 hover:bg-slate-800 text-left text-xs font-mono text-slate-200 transition-all"
+                  className="flex-1 py-2 rounded-lg bg-cyan-600/40 hover:bg-cyan-600 text-cyan-200 hover:text-white border border-cyan-500/30 transition-all font-bold"
                 >
-                  <div className="font-bold text-indigo-400">+15 Rush Hour</div>
-                  <div className="text-[10px] text-slate-400">Simulate keynote influx</div>
+                  +15 Surge
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="pt-3 border-t border-white/10 flex items-center justify-between text-[11px] font-mono text-slate-400">
-            <span>Hardware Support: USB Barcode / NFC / iOS Wallet</span>
-            <span className="text-emerald-400">Online</span>
+          {/* Verification Result Toast Box */}
+          {scanResult && (
+            <div 
+              role="alert"
+              className={`p-4 rounded-2xl border text-xs font-mono flex items-start gap-3 animate-fadeIn ${
+                scanResult.success
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                  : 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+              }`}
+            >
+              {scanResult.success ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <div className="font-bold text-sm">
+                  {scanResult.success ? 'Access Granted' : 'Verification Denied'}
+                </div>
+                <div className="mt-0.5 leading-relaxed">{scanResult.message}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="p-3 rounded-xl bg-slate-900 border border-white/5 flex items-center justify-between text-[10px] font-mono text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Cryptographic Token Validated</span>
+            </span>
+            <span>Latency: 42ms</span>
           </div>
 
         </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   Radio, 
   Building2, 
@@ -10,6 +10,7 @@ import {
   PlusCircle, 
   Search,
   Bot,
+  X
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -29,17 +30,20 @@ import { AIAnnouncementStudio } from './AIAnnouncementStudio';
 import { QRScannerModal } from './QRScannerModal';
 import { GithubIcon } from '../common/Icons';
 import { EventType } from '../../types';
+import { sanitizeTextInput, sanitizeURL } from '../../utils/security';
 
 export const OrganizerDashboard: React.FC = () => {
   const { 
     analytics, 
+    timeRemainingSeconds,
     teams, 
     submissions, 
     aiInsights,
     dismissAIInsight,
     supportTickets,
     playSfx,
-    setCurrentEventType
+    setCurrentEventType,
+    showToast
   } = useEvent();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'broadcast' | 'checkin' | 'teams' | 'insights' | 'wizard'>('overview');
@@ -54,18 +58,39 @@ export const OrganizerDashboard: React.FC = () => {
   const [newEventPrize, setNewEventPrize] = useState('$100,000');
   const [newEventCreatedSuccess, setNewEventCreatedSuccess] = useState(false);
 
-  const formatTime = (secs: number) => {
+  const formatTime = useCallback((secs: number) => {
     const h = Math.floor(secs / 3600);
     const m = Math.floor((secs % 3600) / 60);
     const s = secs % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  }, []);
 
-  const filteredTeams = teams.filter(t => 
-    t.name.toLowerCase().includes(teamSearchQuery.toLowerCase()) ||
-    t.track.toLowerCase().includes(teamSearchQuery.toLowerCase()) ||
-    t.tableNumber.toLowerCase().includes(teamSearchQuery.toLowerCase())
-  );
+  const filteredTeams = useMemo(() => {
+    const q = teamSearchQuery.toLowerCase().trim();
+    if (!q) return teams;
+    return teams.filter(t => 
+      t.name.toLowerCase().includes(q) ||
+      t.track.toLowerCase().includes(q) ||
+      t.tableNumber.toLowerCase().includes(q)
+    );
+  }, [teams, teamSearchQuery]);
+
+  const handleLaunchEvent = useCallback(() => {
+    playSfx('cheer');
+    const cleanTitle = sanitizeTextInput(newEventTitle, 100);
+    setCurrentEventType(wizardEventType);
+    setNewEventCreatedSuccess(true);
+    showToast({
+      type: 'success',
+      title: 'Event Initialized',
+      message: `"${cleanTitle}" is live and telemetry nodes are connected.`
+    });
+    setTimeout(() => {
+      setShowCreateWizard(false);
+      setNewEventCreatedSuccess(false);
+      setWizardStep(1);
+    }, 1800);
+  }, [newEventTitle, playSfx, setCurrentEventType, showToast, wizardEventType]);
 
   return (
     <div className="space-y-8 pb-16">
@@ -109,7 +134,7 @@ export const OrganizerDashboard: React.FC = () => {
                   <span>TIME REMAINING</span>
                 </div>
                 <div className="text-xl sm:text-2xl font-black text-cyan-400 tracking-wider">
-                  {formatTime(analytics.timeRemainingSeconds)}
+                  {formatTime(timeRemainingSeconds)}
                 </div>
               </div>
 
@@ -193,7 +218,11 @@ export const OrganizerDashboard: React.FC = () => {
           </div>
 
           {/* Module Navigation Tabs */}
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10">
+          <div 
+            role="tablist" 
+            aria-label="Organizer Modules"
+            className="flex flex-wrap gap-2 pt-2 border-t border-white/10"
+          >
             {[
               { id: 'overview', label: 'Digital Twin & Crowd Analytics', icon: <Building2 className="w-4 h-4" /> },
               { id: 'broadcast', label: 'AI Multi-Channel Broadcast', icon: <Radio className="w-4 h-4 text-cyan-400" /> },
@@ -205,6 +234,8 @@ export const OrganizerDashboard: React.FC = () => {
               return (
                 <button
                   key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
                   onClick={() => {
                     playSfx('beep');
                     setActiveTab(tab.id as typeof activeTab);
@@ -303,24 +334,20 @@ export const OrganizerDashboard: React.FC = () => {
                 </ResponsiveContainer>
               </div>
 
-              <div className="space-y-2 pt-2 border-t border-white/10">
-                {analytics.trackDistribution.map((track, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs font-mono">
-                    <span className="flex items-center gap-2 text-slate-300">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: track.color }} />
-                      <span>{track.name}</span>
-                    </span>
-                    <span className="font-bold text-white">{track.count} teams</span>
+              <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-white/5 text-[10px] font-mono">
+                {analytics.trackDistribution.map((t, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.color }} />
+                    <span className="text-slate-300 truncate">{t.name}: <strong>{t.count}</strong></span>
                   </div>
                 ))}
               </div>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* Tab 2: AI Announcement Studio */}
+      {/* Tab 2: AI Multi-Channel Broadcast Studio */}
       {activeTab === 'broadcast' && (
         <AIAnnouncementStudio />
       )}
@@ -332,50 +359,43 @@ export const OrganizerDashboard: React.FC = () => {
 
       {/* Tab 4: Team Formation Radar & Submissions */}
       {activeTab === 'teams' && (
-        <div className="space-y-5">
-          <div className="glass-card rounded-2xl border border-white/10 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
-              <h3 className="font-bold text-lg text-white font-sans">Team Formation Radar & Submission Tracking</h3>
-              <p className="text-xs text-slate-400 font-mono">Live telemetry across all 64+ teams and GitHub repositories</p>
+              <h3 className="font-bold text-lg text-white font-sans">Team Formation Radar & Deliverable Submissions</h3>
+              <p className="text-xs text-slate-400 font-mono">Track squads, table seating, and submission health</p>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <div className="relative flex-1 sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={teamSearchQuery}
-                  onChange={(e) => setTeamSearchQuery(e.target.value)}
-                  placeholder="Filter teams, tracks, tables..."
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
-                />
-              </div>
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={teamSearchQuery}
+                onChange={(e) => setTeamSearchQuery(e.target.value)}
+                placeholder="Search team, track, or table..."
+                className="w-full bg-slate-900 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
+              />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" role="list">
             {filteredTeams.map((team) => {
-              const hasSubmission = submissions.some(s => s.teamId === team.id);
+              const hasSubmission = team.submissionStatus === 'submitted' || team.submissionStatus === 'evaluated';
               const submissionData = submissions.find(s => s.teamId === team.id);
 
               return (
-                <div 
+                <div
                   key={team.id}
+                  role="listitem"
                   className="glass-card-hover rounded-2xl border border-white/10 p-5 space-y-4 flex flex-col justify-between"
                 >
                   <div className="space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-3">
-                        <img 
-                          src={team.avatar} 
-                          alt={team.name} 
-                          className="w-10 h-10 rounded-xl object-cover border border-white/10"
-                        />
+                        <img src={team.avatar} alt={team.name} className="w-10 h-10 rounded-xl object-cover border border-white/10" />
                         <div>
-                          <h4 className="font-bold text-sm text-white font-sans group-hover:text-cyan-300 transition-colors">
-                            {team.name}
-                          </h4>
-                          <span className="text-[10px] font-mono text-cyan-400 font-semibold">{team.track}</span>
+                          <h4 className="font-bold text-sm text-white font-sans">{team.name}</h4>
+                          <span className="text-[10px] font-mono text-cyan-400">{team.track}</span>
                         </div>
                       </div>
 
@@ -422,9 +442,9 @@ export const OrganizerDashboard: React.FC = () => {
 
                     {team.githubRepo && (
                       <a 
-                        href={team.githubRepo} 
+                        href={sanitizeURL(team.githubRepo)} 
                         target="_blank" 
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="text-slate-400 hover:text-white flex items-center gap-1 transition-colors"
                       >
                         <GithubIcon className="w-3.5 h-3.5" />
@@ -450,52 +470,50 @@ export const OrganizerDashboard: React.FC = () => {
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-white font-sans">AI Operations & Bottleneck Detection Engine</h3>
-                  <p className="text-xs text-slate-400 font-mono">Automated monitoring for judging delays, crowd congestion, and submission pacing</p>
+                  <h3 className="font-bold text-base text-white font-sans">AI Operations Co-Pilot & Bottleneck Alerts</h3>
+                  <p className="text-xs text-slate-400 font-mono">Automated telemetry scans for crowd surges, judging delays, and capacity alerts</p>
                 </div>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                REAL-TIME AUDIT
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                ACTIVE MONITORING
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-2">
+            <div className="space-y-4">
               {aiInsights.map((insight) => (
                 <div 
                   key={insight.id}
-                  className={`p-5 rounded-2xl border space-y-3 flex flex-col justify-between ${
-                    insight.severity === 'warning'
-                      ? 'bg-amber-950/20 border-amber-500/40 text-slate-200'
-                      : 'bg-slate-900/80 border-cyan-500/30 text-slate-200'
-                  }`}
+                  className="p-4 rounded-2xl bg-slate-900/90 border border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-mono">
-                      <span className={`px-2 py-0.5 rounded uppercase font-bold ${
-                        insight.severity === 'warning' ? 'bg-amber-500/20 text-amber-300' : 'bg-cyan-500/20 text-cyan-300'
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                        insight.severity === 'critical'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : insight.severity === 'warning'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                       }`}>
-                        {insight.type} alert
+                        {insight.severity}
                       </span>
-                      <span className="text-slate-500">{insight.timestamp}</span>
+                      <h4 className="font-bold text-sm text-white font-sans">{insight.title}</h4>
                     </div>
-
-                    <h4 className="font-bold text-sm text-white font-sans">{insight.title}</h4>
-                    <p className="text-xs text-slate-300 font-sans leading-relaxed">{insight.description}</p>
-                    
-                    <div className="p-3 rounded-xl bg-slate-950/80 border border-white/5 space-y-1">
-                      <div className="text-[10px] font-mono text-cyan-300 font-bold flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" />
-                        <span>AI Action Recommendation:</span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 leading-relaxed font-sans">{insight.recommendation}</p>
-                    </div>
+                    <p className="text-xs text-slate-300 font-sans">{insight.description}</p>
+                    <p className="text-xs text-cyan-300 font-mono mt-1">
+                      💡 Recommendation: {insight.recommendation}
+                    </p>
                   </div>
 
-                  <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs font-mono">
+                  <div className="flex items-center gap-2 text-xs font-mono shrink-0">
                     <button
                       onClick={() => {
                         playSfx('success');
                         dismissAIInsight(insight.id);
+                        showToast({
+                          type: 'success',
+                          title: 'Optimization Applied',
+                          message: `Resolved: "${insight.title}"`
+                        });
                       }}
                       className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow-sm"
                     >
@@ -517,7 +535,12 @@ export const OrganizerDashboard: React.FC = () => {
 
       {/* Event Creation Wizard Modal (All Event Types) */}
       {showCreateWizard && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div 
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="wizard-title"
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
+        >
           <div className="glass-card rounded-3xl border border-indigo-500/40 p-6 max-w-xl w-full space-y-6 shadow-2xl animate-fadeIn max-h-[90vh] overflow-y-auto">
             
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
@@ -526,15 +549,16 @@ export const OrganizerDashboard: React.FC = () => {
                   <Sparkles className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-white font-sans">Event Creation Operating Wizard</h3>
+                  <h3 id="wizard-title" className="font-bold text-base text-white font-sans">Event Creation Operating Wizard</h3>
                   <p className="text-xs text-slate-400 font-mono">Launch any event category in 3 simple steps</p>
                 </div>
               </div>
               <button
                 onClick={() => setShowCreateWizard(false)}
+                aria-label="Close wizard"
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -581,8 +605,9 @@ export const OrganizerDashboard: React.FC = () => {
             {wizardStep === 2 && (
               <div className="space-y-4 text-xs font-mono">
                 <div>
-                  <label className="text-slate-300 block mb-1">Event Name:</label>
+                  <label htmlFor="wizard-event-name" className="text-slate-300 block mb-1">Event Name:</label>
                   <input
+                    id="wizard-event-name"
                     type="text"
                     value={newEventTitle}
                     onChange={(e) => setNewEventTitle(e.target.value)}
@@ -590,8 +615,9 @@ export const OrganizerDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block mb-1">Tagline & Vision:</label>
+                  <label htmlFor="wizard-event-tagline" className="text-slate-300 block mb-1">Tagline & Vision:</label>
                   <input
+                    id="wizard-event-tagline"
                     type="text"
                     value={newEventTagline}
                     onChange={(e) => setNewEventTagline(e.target.value)}
@@ -599,8 +625,9 @@ export const OrganizerDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block mb-1">Prize Pool / Budget ($):</label>
+                  <label htmlFor="wizard-event-prize" className="text-slate-300 block mb-1">Prize Pool / Budget ($):</label>
                   <input
+                    id="wizard-event-prize"
                     type="text"
                     value={newEventPrize}
                     onChange={(e) => setNewEventPrize(e.target.value)}
@@ -643,16 +670,7 @@ export const OrganizerDashboard: React.FC = () => {
                 </button>
               ) : (
                 <button
-                  onClick={() => {
-                    playSfx('cheer');
-                    setCurrentEventType(wizardEventType);
-                    setNewEventCreatedSuccess(true);
-                    setTimeout(() => {
-                      setShowCreateWizard(false);
-                      setNewEventCreatedSuccess(false);
-                      setWizardStep(1);
-                    }, 2000);
-                  }}
+                  onClick={handleLaunchEvent}
                   className="px-5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 text-white font-mono text-xs font-bold shadow-neon-cyan"
                 >
                   {newEventCreatedSuccess ? '✓ Event Initialized & Deployed!' : 'Publish Event Live'}

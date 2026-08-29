@@ -4,6 +4,16 @@ node_modules/
 .pnp.js
 jspm_packages/
 
+# Test coverage
+coverage/
+*.lcov
+
+# Vercel
+.vercel/
+
+# TypeScript cache
+*.tsbuildinfo
+
 # Production and build outputs
 dist/
 dist-ssr/

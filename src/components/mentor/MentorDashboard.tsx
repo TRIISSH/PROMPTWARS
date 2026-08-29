@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   HeartHandshake, 
   CheckCircle2, 
@@ -20,22 +20,36 @@ export const MentorDashboard: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
-  const filteredTickets = supportTickets.filter(tkt => {
-    const matchesCat = filterCategory === 'all' || tkt.category === filterCategory;
-    const matchesStatus = filterStatus === 'all' || tkt.status === filterStatus;
-    return matchesCat && matchesStatus;
-  });
+  const filteredTickets = useMemo(() => {
+    return supportTickets.filter(tkt => {
+      const matchesCat = filterCategory === 'all' || tkt.category === filterCategory;
+      const matchesStatus = filterStatus === 'all' || tkt.status === filterStatus;
+      return matchesCat && matchesStatus;
+    });
+  }, [supportTickets, filterCategory, filterStatus]);
 
-  const handleClaim = (ticketId: string) => {
+  const handleClaim = useCallback((ticketId: string) => {
     playSfx('beep');
     claimSupportTicket(ticketId, mentorUser.name);
-  };
+  }, [claimSupportTicket, mentorUser.name, playSfx]);
 
-  const handleResolve = (ticketId: string) => {
+  const handleResolve = useCallback((ticketId: string) => {
     playSfx('success');
     resolveSupportTicket(ticketId);
     triggerConfetti();
-  };
+  }, [playSfx, resolveSupportTicket, triggerConfetti]);
+
+  const openTicketsCount = useMemo(() => {
+    return supportTickets.filter(t => t.status === 'open').length;
+  }, [supportTickets]);
+
+  const inProgressTicketsCount = useMemo(() => {
+    return supportTickets.filter(t => t.status === 'in_progress').length;
+  }, [supportTickets]);
+
+  const resolvedTicketsCount = useMemo(() => {
+    return supportTickets.filter(t => t.status === 'resolved').length;
+  }, [supportTickets]);
 
   return (
     <div className="space-y-8 pb-16">
@@ -70,19 +84,19 @@ export const MentorDashboard: React.FC = () => {
             <div className="px-3.5 py-2 rounded-xl bg-slate-950/80 border border-white/10">
               <span className="text-slate-400 block text-[10px]">Open Tickets</span>
               <span className="font-bold text-amber-400 text-sm">
-                {supportTickets.filter(t => t.status === 'open').length} Active
+                {openTicketsCount} Active
               </span>
             </div>
             <div className="px-3.5 py-2 rounded-xl bg-slate-950/80 border border-white/10">
               <span className="text-slate-400 block text-[10px]">In Progress</span>
               <span className="font-bold text-cyan-400 text-sm">
-                {supportTickets.filter(t => t.status === 'in_progress').length} Claimed
+                {inProgressTicketsCount} Claimed
               </span>
             </div>
             <div className="px-3.5 py-2 rounded-xl bg-slate-950/80 border border-white/10">
               <span className="text-slate-400 block text-[10px]">Resolved</span>
               <span className="font-bold text-emerald-400 text-sm">
-                {supportTickets.filter(t => t.status === 'resolved').length} Cleared
+                {resolvedTicketsCount} Cleared
               </span>
             </div>
           </div>
@@ -91,11 +105,13 @@ export const MentorDashboard: React.FC = () => {
 
       {/* Filter Strip */}
       <div className="glass-card rounded-2xl border border-white/10 p-4 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Filter tickets by category">
           <span className="text-slate-400">Category:</span>
           {['all', 'Technical / API', 'Hardware', 'Mentorship', 'Logistics / Pass'].map((cat) => (
             <button
               key={cat}
+              role="tab"
+              aria-selected={filterCategory === cat}
               onClick={() => {
                 playSfx('beep');
                 setFilterCategory(cat);
@@ -111,11 +127,13 @@ export const MentorDashboard: React.FC = () => {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" role="tablist" aria-label="Filter tickets by status">
           <span className="text-slate-400">Status:</span>
           {['all', 'open', 'in_progress', 'resolved'].map((st) => (
             <button
               key={st}
+              role="tab"
+              aria-selected={filterStatus === st}
               onClick={() => {
                 playSfx('beep');
                 setFilterStatus(st);
@@ -133,7 +151,7 @@ export const MentorDashboard: React.FC = () => {
       </div>
 
       {/* Tickets List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" role="list">
         {filteredTickets.map((ticket) => {
           const isOpen = ticket.status === 'open';
           const isInProgress = ticket.status === 'in_progress';
@@ -142,6 +160,7 @@ export const MentorDashboard: React.FC = () => {
           return (
             <div
               key={ticket.id}
+              role="listitem"
               className={`glass-card-hover rounded-2xl border p-5 space-y-4 flex flex-col justify-between ${
                 isOpen
                   ? 'border-amber-500/40 bg-slate-900/90'
@@ -151,75 +170,75 @@ export const MentorDashboard: React.FC = () => {
               }`}
             >
               <div className="space-y-3">
-                {/* Header */}
                 <div className="flex items-start justify-between gap-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                    {ticket.category}
-                  </span>
-
-                  <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
-                    ticket.priority === 'urgent'
+                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider ${
+                    ticket.priority === 'urgent' || ticket.priority === 'high'
                       ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      : ticket.priority === 'high'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-slate-800 text-slate-400'
+                      : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                   }`}>
                     {ticket.priority} Priority
+                  </span>
+
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold capitalize ${
+                    isOpen 
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+                      : isInProgress 
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' 
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  }`}>
+                    {ticket.status.replace('_', ' ')}
                   </span>
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-sm text-white font-sans">{ticket.authorName}</h4>
-                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-cyan-400 mt-0.5">
-                    <MapPin className="w-3 h-3" />
+                  <h4 className="font-bold text-sm text-white font-sans">{ticket.category}</h4>
+                  <div className="flex items-center gap-1.5 text-xs font-mono text-cyan-400 mt-0.5">
+                    <MapPin className="w-3.5 h-3.5" />
                     <span>{ticket.tableNumber}</span>
+                    <span className="text-slate-500">•</span>
+                    <span className="text-slate-400">{ticket.authorName}</span>
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-300 font-sans leading-relaxed">
-                  {ticket.description}
+                <p className="text-xs text-slate-300 font-sans leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-white/5">
+                  "{ticket.description}"
                 </p>
 
                 {ticket.assignedTo && (
-                  <div className="p-2 rounded-lg bg-slate-950 border border-white/5 text-[10px] font-mono text-cyan-300">
-                    Assigned: {ticket.assignedTo}
+                  <div className="text-[11px] font-mono text-purple-300 flex items-center gap-1">
+                    <span>Mentor Assigned:</span>
+                    <strong className="text-white">{ticket.assignedTo}</strong>
                   </div>
                 )}
               </div>
 
-              {/* Actions */}
-              <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-2 font-mono text-xs">
-                <span className="text-[10px] text-slate-500">{ticket.createdAt}</span>
+              <div className="pt-3 border-t border-white/5 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-mono text-slate-500">{ticket.createdAt}</span>
 
-                <div className="flex items-center gap-2">
-                  {isOpen && (
-                    <button
-                      type="button"
-                      onClick={() => handleClaim(ticket.id)}
-                      className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs transition-all shadow-sm"
-                    >
-                      Claim Ticket
-                    </button>
-                  )}
+                {isOpen && (
+                  <button
+                    onClick={() => handleClaim(ticket.id)}
+                    className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs font-mono shadow-sm transition-all hover:scale-105"
+                  >
+                    Claim Ticket
+                  </button>
+                )}
 
-                  {isInProgress && (
-                    <button
-                      type="button"
-                      onClick={() => handleResolve(ticket.id)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shadow-sm flex items-center gap-1"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Resolve</span>
-                    </button>
-                  )}
+                {isInProgress && (
+                  <button
+                    onClick={() => handleResolve(ticket.id)}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono flex items-center gap-1 shadow-sm transition-all hover:scale-105"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Mark Resolved</span>
+                  </button>
+                )}
 
-                  {isResolved && (
-                    <span className="text-emerald-400 font-bold text-[11px] flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Resolved</span>
-                    </span>
-                  )}
-                </div>
+                {isResolved && (
+                  <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Resolved
+                  </span>
+                )}
               </div>
             </div>
           );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   Users, 
   Send, 
@@ -9,17 +9,18 @@ import {
   ExternalLink, 
   Clock, 
   Flame, 
-  Check,
-  Bot,
-  LifeBuoy
+  Check, 
+  Bot, 
+  LifeBuoy,
+  X
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useEvent } from '../../context/EventContext';
 import { AITeamMatchmaker } from './AITeamMatchmaker';
 import { INITIAL_MILESTONES } from '../../data/mockData';
 import { GithubIcon } from '../common/Icons';
+import { sanitizeURL } from '../../utils/security';
 
-// Known fictional demo URLs in mock data - show toast instead of navigating
 const FICTIONAL_DEMO_URLS = [
   'omninexus-ai.live',
   'zerolag.network',
@@ -38,18 +39,23 @@ export const ParticipantDashboard: React.FC = () => {
     submissions, 
     submitProject, 
     playSfx, 
-    aiChatMessages,
-    sendAIChatMessage,
-    createSupportTicket
+    aiChatMessages, 
+    sendAIChatMessage, 
+    createSupportTicket,
+    showToast
   } = useEvent();
 
-  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+  const handleDemoClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
     if (isFictionalDemoUrl(url)) {
       e.preventDefault();
       playSfx('alert');
-      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
+      showToast({
+        type: 'info',
+        title: 'Demo Environment Simulation',
+        message: 'Live demo prototype is connected to test sandbox.'
+      });
     }
-  };
+  }, [playSfx, showToast]);
 
   const [activeTab, setActiveTab] = useState<'matchmaker' | 'submission' | 'schedule' | 'assistant' | 'gamification'>('matchmaker');
 
@@ -95,7 +101,7 @@ export const ParticipantDashboard: React.FC = () => {
     }
   }, [participantUser.qrHash]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!projectTitle.trim() || !projectGithub.trim()) return;
 
@@ -114,17 +120,17 @@ export const ParticipantDashboard: React.FC = () => {
       });
       setIsSubmitting(false);
       setSubmitSuccess(true);
-    }, 800);
-  };
+    }, 600);
+  }, [projectTitle, projectGithub, projectTagline, projectDescription, techStackInput, projectTrack, projectDemo, playSfx, submitProject]);
 
-  const handleSendChat = (e: React.FormEvent) => {
+  const handleSendChat = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
     sendAIChatMessage(chatInput);
     setChatInput('');
-  };
+  }, [chatInput, sendAIChatMessage]);
 
-  const handleFileTicket = (e: React.FormEvent) => {
+  const handleFileTicket = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (!ticketDesc.trim()) return;
 
@@ -142,10 +148,12 @@ export const ParticipantDashboard: React.FC = () => {
       setShowTicketModal(false);
       setTicketSuccess(false);
       setTicketDesc('');
-    }, 2000);
-  };
+    }, 1800);
+  }, [ticketDesc, participantUser.name, participantUser.tableAssigned, ticketCategory, createSupportTicket]);
 
-  const mySubmission = submissions.find(s => s.teamId === 'tm_1');
+  const mySubmission = useMemo(() => {
+    return submissions.find(s => s.teamId === 'tm_1');
+  }, [submissions]);
 
   return (
     <div className="space-y-8 pb-16">
@@ -232,7 +240,7 @@ export const ParticipantDashboard: React.FC = () => {
                 playSfx('beep');
                 setShowTicketModal(true);
               }}
-              className="flex items-center gap-1.5 text-xs font-mono text-purple-400 hover:text-purple-300 transition-colors"
+              className="flex items-center gap-1.5 text-xs font-mono text-purple-400 hover:text-purple-300 transition-colors focus:outline-none focus:underline"
             >
               <LifeBuoy className="w-3.5 h-3.5" />
               <span>Need Mentor Help? File Ticket</span>
@@ -242,7 +250,11 @@ export const ParticipantDashboard: React.FC = () => {
         </div>
 
         {/* Participant Navigation Tabs */}
-        <div className="flex flex-wrap gap-2 pt-6 mt-6 border-t border-white/10">
+        <div 
+          role="tablist"
+          aria-label="Hacker Hub Modules"
+          className="flex flex-wrap gap-2 pt-6 mt-6 border-t border-white/10"
+        >
           {[
             { id: 'matchmaker', label: 'AI Team Matchmaker', icon: <Users className="w-4 h-4 text-cyan-400" /> },
             { id: 'submission', label: 'Project Submission Portal', icon: <Send className="w-4 h-4 text-indigo-400" /> },
@@ -254,6 +266,8 @@ export const ParticipantDashboard: React.FC = () => {
             return (
               <button
                 key={tab.id}
+                role="tab"
+                aria-selected={isActive}
                 onClick={() => {
                   playSfx('beep');
                   setActiveTab(tab.id as typeof activeTab);
@@ -289,8 +303,9 @@ export const ParticipantDashboard: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs font-mono">
               <div>
-                <label className="text-slate-300 block mb-1 font-semibold">Project Title:</label>
+                <label htmlFor="proj-title" className="text-slate-300 block mb-1 font-semibold">Project Title:</label>
                 <input
+                  id="proj-title"
                   type="text"
                   value={projectTitle}
                   onChange={(e) => setProjectTitle(e.target.value)}
@@ -299,8 +314,9 @@ export const ParticipantDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1 font-semibold">Short Tagline (Elevator Pitch):</label>
+                <label htmlFor="proj-tagline" className="text-slate-300 block mb-1 font-semibold">Short Tagline (Elevator Pitch):</label>
                 <input
+                  id="proj-tagline"
                   type="text"
                   value={projectTagline}
                   onChange={(e) => setProjectTagline(e.target.value)}
@@ -309,8 +325,9 @@ export const ParticipantDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1 font-semibold">Detailed Description & Architecture:</label>
+                <label htmlFor="proj-desc" className="text-slate-300 block mb-1 font-semibold">Detailed Description & Architecture:</label>
                 <textarea
+                  id="proj-desc"
                   rows={4}
                   value={projectDescription}
                   onChange={(e) => setProjectDescription(e.target.value)}
@@ -320,8 +337,9 @@ export const ParticipantDashboard: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Target Challenge Track:</label>
+                  <label htmlFor="proj-track" className="text-slate-300 block mb-1 font-semibold">Target Challenge Track:</label>
                   <select
+                    id="proj-track"
                     value={projectTrack}
                     onChange={(e) => setProjectTrack(e.target.value)}
                     className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-400"
@@ -334,8 +352,9 @@ export const ParticipantDashboard: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Tech Stack (comma-separated):</label>
+                  <label htmlFor="proj-techstack" className="text-slate-300 block mb-1 font-semibold">Tech Stack (comma-separated):</label>
                   <input
+                    id="proj-techstack"
                     type="text"
                     value={techStackInput}
                     onChange={(e) => setTechStackInput(e.target.value)}
@@ -346,8 +365,9 @@ export const ParticipantDashboard: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">GitHub Repo URL:</label>
+                  <label htmlFor="proj-github" className="text-slate-300 block mb-1 font-semibold">GitHub Repo URL:</label>
                   <input
+                    id="proj-github"
                     type="url"
                     value={projectGithub}
                     onChange={(e) => setProjectGithub(e.target.value)}
@@ -355,8 +375,9 @@ export const ParticipantDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Live Demo URL:</label>
+                  <label htmlFor="proj-demo" className="text-slate-300 block mb-1 font-semibold">Live Demo URL:</label>
                   <input
+                    id="proj-demo"
                     type="url"
                     value={projectDemo}
                     onChange={(e) => setProjectDemo(e.target.value)}
@@ -364,8 +385,9 @@ export const ParticipantDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block mb-1 font-semibold">Video Demo Link:</label>
+                  <label htmlFor="proj-video" className="text-slate-300 block mb-1 font-semibold">Video Demo Link:</label>
                   <input
+                    id="proj-video"
                     type="url"
                     value={projectVideo}
                     onChange={(e) => setProjectVideo(e.target.value)}
@@ -432,15 +454,20 @@ export const ParticipantDashboard: React.FC = () => {
 
                 <div className="pt-2 flex items-center gap-3 text-xs font-mono">
                   {projectGithub && (
-                    <a href={projectGithub} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center gap-1">
+                    <a 
+                      href={sanitizeURL(projectGithub)} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-cyan-400 hover:underline flex items-center gap-1"
+                    >
                       <GithubIcon className="w-3.5 h-3.5" /> Repo
                     </a>
                   )}
                   {projectDemo && (
                     <a 
-                      href={projectDemo} 
+                      href={sanitizeURL(projectDemo)} 
                       target="_blank" 
-                      rel="noreferrer" 
+                      rel="noopener noreferrer" 
                       onClick={(e) => handleDemoClick(e, projectDemo)}
                       className="text-indigo-400 hover:underline flex items-center gap-1"
                     >
@@ -475,10 +502,11 @@ export const ParticipantDashboard: React.FC = () => {
             <span className="text-xs font-mono text-cyan-400">All Times in PDT</span>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-4" role="list">
             {INITIAL_MILESTONES.map((milestone) => (
               <div 
                 key={milestone.id}
+                role="listitem"
                 className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${
                   milestone.isCurrent
                     ? 'bg-indigo-950/40 border-cyan-400 shadow-neon-cyan ring-1 ring-cyan-400'
@@ -539,7 +567,11 @@ export const ParticipantDashboard: React.FC = () => {
           </div>
 
           {/* Messages Container */}
-          <div className="space-y-4 max-h-[380px] overflow-y-auto p-3 bg-slate-950/80 rounded-2xl border border-white/5">
+          <div 
+            role="log"
+            aria-live="polite"
+            className="space-y-4 max-h-[380px] overflow-y-auto p-3 bg-slate-950/80 rounded-2xl border border-white/5"
+          >
             {aiChatMessages.map((msg) => {
               const isAssistant = msg.sender === 'assistant';
               return (
@@ -641,25 +673,32 @@ export const ParticipantDashboard: React.FC = () => {
 
       {/* File Support Ticket Modal */}
       {showTicketModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div 
+          role="dialog" 
+          aria-modal="true" 
+          aria-labelledby="ticket-modal-title"
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
+        >
           <div className="glass-card rounded-3xl border border-purple-500/40 p-6 max-w-lg w-full space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-2">
                 <LifeBuoy className="w-5 h-5 text-purple-400" />
-                <h3 className="font-bold text-base text-white font-sans">Request Mentor & Staff Assistance</h3>
+                <h3 id="ticket-modal-title" className="font-bold text-base text-white font-sans">Request Mentor & Staff Assistance</h3>
               </div>
               <button
                 onClick={() => setShowTicketModal(false)}
+                aria-label="Close modal"
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleFileTicket} className="space-y-4 text-xs font-mono">
               <div>
-                <label className="text-slate-300 block mb-1 font-semibold">Category:</label>
+                <label htmlFor="ticket-category-select" className="text-slate-300 block mb-1 font-semibold">Category:</label>
                 <select
+                  id="ticket-category-select"
                   value={ticketCategory}
                   onChange={(e) => setTicketCategory(e.target.value as typeof ticketCategory)}
                   className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-white focus:outline-none focus:border-cyan-400"
@@ -673,8 +712,9 @@ export const ParticipantDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1 font-semibold">Describe the issue / blocker:</label>
+                <label htmlFor="ticket-desc-input" className="text-slate-300 block mb-1 font-semibold">Describe the issue / blocker:</label>
                 <textarea
+                  id="ticket-desc-input"
                   rows={3}
                   value={ticketDesc}
                   onChange={(e) => setTicketDesc(e.target.value)}
