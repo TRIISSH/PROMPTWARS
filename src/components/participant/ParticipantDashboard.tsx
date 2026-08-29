@@ -19,6 +19,19 @@ import { AITeamMatchmaker } from './AITeamMatchmaker';
 import { INITIAL_MILESTONES } from '../../data/mockData';
 import { GithubIcon } from '../common/Icons';
 
+// Known fictional demo URLs in mock data - show toast instead of navigating
+const FICTIONAL_DEMO_URLS = [
+  'omninexus-ai.live',
+  'zerolag.network',
+  'pulseflow.health',
+  'aetherdb.io',
+  'neurosynthetix.app',
+];
+
+const isFictionalDemoUrl = (url: string) => {
+  return FICTIONAL_DEMO_URLS.some(fictional => url.includes(fictional));
+};
+
 export const ParticipantDashboard: React.FC = () => {
   const { 
     participantUser, 
@@ -29,6 +42,14 @@ export const ParticipantDashboard: React.FC = () => {
     sendAIChatMessage,
     createSupportTicket
   } = useEvent();
+
+  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isFictionalDemoUrl(url)) {
+      e.preventDefault();
+      playSfx('alert');
+      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<'matchmaker' | 'submission' | 'schedule' | 'assistant' | 'gamification'>('matchmaker');
 
@@ -416,7 +437,13 @@ export const ParticipantDashboard: React.FC = () => {
                     </a>
                   )}
                   {projectDemo && (
-                    <a href={projectDemo} target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline flex items-center gap-1">
+                    <a 
+                      href={projectDemo} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      onClick={(e) => handleDemoClick(e, projectDemo)}
+                      className="text-indigo-400 hover:underline flex items-center gap-1"
+                    >
                       <ExternalLink className="w-3.5 h-3.5" /> Demo
                     </a>
                   )}

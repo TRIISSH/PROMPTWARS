@@ -14,8 +14,29 @@ import { GithubIcon } from '../common/Icons';
 import { useEvent } from '../../context/EventContext';
 import { Submission } from '../../types';
 
+// Known fictional demo URLs in mock data - show toast instead of navigating
+const FICTIONAL_DEMO_URLS = [
+  'omninexus-ai.live',
+  'zerolag.network',
+  'pulseflow.health',
+  'aetherdb.io',
+  'neurosynthetix.app',
+];
+
+const isFictionalDemoUrl = (url: string) => {
+  return FICTIONAL_DEMO_URLS.some(fictional => url.includes(fictional));
+};
+
 export const EsportsLeaderboard: React.FC = () => {
   const { submissions, playSfx, triggerConfetti, simulateLivePulse } = useEvent();
+
+  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isFictionalDemoUrl(url)) {
+      e.preventDefault();
+      playSfx('alert');
+      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
+    }
+  };
 
   const [selectedTrack, setSelectedTrack] = useState<string>('all');
   const [inspectSubmission, setInspectSubmission] = useState<Submission | null>(null);
@@ -366,7 +387,13 @@ export const EsportsLeaderboard: React.FC = () => {
                   </a>
                 )}
                 {inspectSubmission.demoUrl && (
-                  <a href={inspectSubmission.demoUrl} target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline flex items-center gap-1">
+                  <a 
+                    href={inspectSubmission.demoUrl} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    onClick={(e) => handleDemoClick(e, inspectSubmission.demoUrl!)}
+                    className="text-indigo-400 hover:underline flex items-center gap-1"
+                  >
                     <ExternalLink className="w-3.5 h-3.5" /> Live Prototype
                   </a>
                 )}

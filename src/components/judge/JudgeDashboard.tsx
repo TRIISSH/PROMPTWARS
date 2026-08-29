@@ -13,6 +13,19 @@ import { GithubIcon } from '../common/Icons';
 import { useEvent } from '../../context/EventContext';
 import { Submission } from '../../types';
 
+// Known fictional demo URLs in mock data - show toast instead of navigating
+const FICTIONAL_DEMO_URLS = [
+  'omninexus-ai.live',
+  'zerolag.network',
+  'pulseflow.health',
+  'aetherdb.io',
+  'neurosynthetix.app',
+];
+
+const isFictionalDemoUrl = (url: string) => {
+  return FICTIONAL_DEMO_URLS.some(fictional => url.includes(fictional));
+};
+
 export const JudgeDashboard: React.FC = () => {
   const { 
     judgeUser, 
@@ -21,6 +34,15 @@ export const JudgeDashboard: React.FC = () => {
     playSfx, 
     setCurrentView,
   } = useEvent();
+
+  const handleDemoClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (isFictionalDemoUrl(url)) {
+      e.preventDefault();
+      playSfx('alert');
+      // Could add toast here - for now just alert
+      alert('🚧 Live demo not available in this demo environment.\nThis is a fictional project for demonstration purposes.');
+    }
+  };
 
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>(submissions[0]?.id || 'sub_1');
   const [filterTrack, setFilterTrack] = useState<string>('all');
@@ -242,7 +264,13 @@ export const JudgeDashboard: React.FC = () => {
                       </a>
                     )}
                     {selectedSub.demoUrl && (
-                      <a href={selectedSub.demoUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1.5 transition-all">
+                      <a 
+                        href={selectedSub.demoUrl} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        onClick={(e) => handleDemoClick(e, selectedSub.demoUrl!)}
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1.5 transition-all"
+                      >
                         <ExternalLink className="w-3.5 h-3.5" /> <span>Live Demo</span>
                       </a>
                     )}
